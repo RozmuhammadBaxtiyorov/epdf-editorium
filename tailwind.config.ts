@@ -1,3 +1,4 @@
+
 import type { Config } from "tailwindcss";
 
 export default {
@@ -61,6 +62,15 @@ export default {
 					'accent-foreground': 'hsl(var(--sidebar-accent-foreground))',
 					border: 'hsl(var(--sidebar-border))',
 					ring: 'hsl(var(--sidebar-ring))'
+				},
+				epdf: {
+					primary: '#1e40af',   // Deep blue
+					secondary: '#3b82f6', // Medium blue
+					accent: '#f97316',    // Orange accent
+					background: '#f8fafc', // Light gray background
+					surface: '#ffffff',    // White surface
+					text: '#0f172a',       // Dark text
+					muted: '#64748b'       // Muted text
 				}
 			},
 			borderRadius: {
