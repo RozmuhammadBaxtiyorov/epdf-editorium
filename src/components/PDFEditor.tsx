@@ -1,18 +1,17 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
-import { Textarea } from "@/components/ui/textarea";
-import { 
-  FileText, FilePlus, Highlighter, Trash, 
-  Type, Undo, Redo, ZoomIn, ZoomOut, Save, 
-  Download, Pencil
-} from "lucide-react";
+import { FileText, FilePlus, Download } from "lucide-react";
 import PDFViewer from './PDFViewer';
 import TextEditor from './TextEditor';
+import PDFToolbar from './PDFToolbar';
+import PDFMetadataDialog from './PDFMetadataDialog';
+import ExtractTextDialog from './ExtractTextDialog';
+import { savePDFWithAnnotations, extractTextFromPDFPage, getPDFMetadata, Annotation } from '@/utils/pdfUtils';
 
 const PDFEditor: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
@@ -20,12 +19,18 @@ const PDFEditor: React.FC = () => {
   const [pageNumber, setPageNumber] = useState(1);
   const [numPages, setNumPages] = useState(0);
   const [scale, setScale] = useState(1.0);
-  const [textAnnotations, setTextAnnotations] = useState<any[]>([]);
-  const [highlightAnnotations, setHighlightAnnotations] = useState<any[]>([]);
+  const [textAnnotations, setTextAnnotations] = useState<Annotation[]>([]);
+  const [highlightAnnotations, setHighlightAnnotations] = useState<Annotation[]>([]);
   const [currentTool, setCurrentTool] = useState<string>("select");
   
+  // New state variables
+  const [isMetadataDialogOpen, setIsMetadataDialogOpen] = useState(false);
+  const [isExtractTextDialogOpen, setIsExtractTextDialogOpen] = useState(false);
+  const [pdfMetadata, setPdfMetadata] = useState<any>(null);
+  const [extractedText, setExtractedText] = useState('');
+  
   // Function to handle file upload
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const uploadedFile = e.target.files[0];
       if (uploadedFile.type !== 'application/pdf') {
@@ -35,7 +40,16 @@ const PDFEditor: React.FC = () => {
       
       setFile(uploadedFile);
       setPageNumber(1);
-      toast.success("PDF file loaded successfully");
+      
+      try {
+        // Get metadata when loading the file
+        const metadata = await getPDFMetadata(uploadedFile);
+        setPdfMetadata(metadata);
+        toast.success("PDF file loaded successfully");
+      } catch (error) {
+        console.error("Error loading PDF metadata:", error);
+        toast.error("Error getting PDF metadata");
+      }
     }
   };
 
@@ -51,6 +65,13 @@ const PDFEditor: React.FC = () => {
 
   const goToNextPage = () => {
     setPageNumber(prevPageNumber => Math.min(prevPageNumber + 1, numPages));
+  };
+  
+  // Jump to specific page
+  const jumpToPage = (page: number) => {
+    if (page >= 1 && page <= numPages) {
+      setPageNumber(page);
+    }
   };
 
   // Zoom functions
@@ -70,7 +91,7 @@ const PDFEditor: React.FC = () => {
 
   // Add text annotation
   const addTextAnnotation = (text: string, position: { x: number, y: number }) => {
-    const newAnnotation = {
+    const newAnnotation: Annotation = {
       id: Date.now(),
       type: 'text',
       text,
@@ -84,7 +105,7 @@ const PDFEditor: React.FC = () => {
 
   // Add highlight annotation
   const addHighlight = (bounds: { x: number, y: number, width: number, height: number }) => {
-    const newHighlight = {
+    const newHighlight: Annotation = {
       id: Date.now(),
       type: 'highlight',
       bounds,
@@ -103,6 +124,38 @@ const PDFEditor: React.FC = () => {
       setHighlightAnnotations(prev => prev.filter(anno => anno.id !== id));
     }
     toast.success("Annotation deleted");
+  };
+  
+  // Save PDF with annotations
+  const handleSavePDF = () => {
+    if (!file) return;
+    
+    const allAnnotations = [...textAnnotations, ...highlightAnnotations];
+    savePDFWithAnnotations(file, allAnnotations);
+    toast.success("PDF saved with annotations");
+  };
+  
+  // Show PDF metadata
+  const handleShowMetadata = () => {
+    if (!file || !pdfMetadata) {
+      toast.error("No metadata available");
+      return;
+    }
+    setIsMetadataDialogOpen(true);
+  };
+  
+  // Extract text from the current page
+  const handleExtractText = async () => {
+    if (!file) return;
+    
+    try {
+      const text = await extractTextFromPDFPage(file, pageNumber);
+      setExtractedText(text);
+      setIsExtractTextDialogOpen(true);
+    } catch (error) {
+      console.error("Error extracting text:", error);
+      toast.error("Failed to extract text from page");
+    }
   };
 
   return (
@@ -131,7 +184,11 @@ const PDFEditor: React.FC = () => {
             </Button>
           </div>
           {file && (
-            <Button variant="outline" className="bg-white text-epdf-primary hover:bg-gray-100">
+            <Button 
+              variant="outline" 
+              className="bg-white text-epdf-primary hover:bg-gray-100"
+              onClick={handleSavePDF}
+            >
               <Download size={16} className="mr-2" />
               Save PDF
             </Button>
@@ -142,72 +199,21 @@ const PDFEditor: React.FC = () => {
       {file ? (
         <div className="flex flex-col flex-grow">
           {/* Toolbar */}
-          <div className="bg-gray-100 p-2 border-b flex items-center gap-2 overflow-x-auto">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => selectTool('select')}
-              className={currentTool === 'select' ? 'bg-epdf-secondary text-white' : ''}
-            >
-              <Pencil size={16} className="mr-1" />
-              Select
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => selectTool('text')}
-              className={currentTool === 'text' ? 'bg-epdf-secondary text-white' : ''}
-            >
-              <Type size={16} className="mr-1" />
-              Add Text
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => selectTool('highlight')}
-              className={currentTool === 'highlight' ? 'bg-epdf-secondary text-white' : ''}
-            >
-              <Highlighter size={16} className="mr-1" />
-              Highlight
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => selectTool('erase')}
-              className={currentTool === 'erase' ? 'bg-epdf-secondary text-white' : ''}
-            >
-              <Trash size={16} className="mr-1" />
-              Delete
-            </Button>
-            <div className="border-l h-8 mx-2"></div>
-            <Button variant="ghost" size="sm" onClick={zoomIn}>
-              <ZoomIn size={16} />
-            </Button>
-            <span className="text-sm">{Math.round(scale * 100)}%</span>
-            <Button variant="ghost" size="sm" onClick={zoomOut}>
-              <ZoomOut size={16} />
-            </Button>
-            <div className="border-l h-8 mx-2"></div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={goToPreviousPage}
-              disabled={pageNumber <= 1}
-            >
-              Previous
-            </Button>
-            <span className="text-sm">
-              Page {pageNumber} of {numPages}
-            </span>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={goToNextPage}
-              disabled={pageNumber >= numPages}
-            >
-              Next
-            </Button>
-          </div>
+          <PDFToolbar
+            currentTool={currentTool}
+            selectTool={selectTool}
+            zoomIn={zoomIn}
+            zoomOut={zoomOut}
+            scale={scale}
+            pageNumber={pageNumber}
+            numPages={numPages}
+            goToPreviousPage={goToPreviousPage}
+            goToNextPage={goToNextPage}
+            onJumpToPage={jumpToPage}
+            onSave={handleSavePDF}
+            onExtractText={handleExtractText}
+            onShowMetadata={handleShowMetadata}
+          />
 
           {/* Main content area */}
           <div className="flex-grow overflow-auto bg-gray-200 p-4">
@@ -274,6 +280,20 @@ const PDFEditor: React.FC = () => {
           </div>
         </div>
       )}
+      
+      {/* Dialogs */}
+      <PDFMetadataDialog 
+        isOpen={isMetadataDialogOpen}
+        onClose={() => setIsMetadataDialogOpen(false)}
+        metadata={pdfMetadata}
+      />
+      
+      <ExtractTextDialog
+        isOpen={isExtractTextDialogOpen}
+        onClose={() => setIsExtractTextDialogOpen(false)}
+        extractedText={extractedText}
+        pageNumber={pageNumber}
+      />
     </div>
   );
 };
